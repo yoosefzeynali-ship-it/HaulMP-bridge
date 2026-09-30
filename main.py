@@ -2,6 +2,7 @@ import os
 import re
 import html
 import threading
+import traceback
 
 import aiohttp
 import discord
@@ -10,12 +11,13 @@ from flask import Flask
 
 
 # ============================================================
-# Environment Variables
+# ENVIRONMENT
 # ============================================================
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+
 
 if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_TOKEN not found")
@@ -28,137 +30,432 @@ if not CHAT_ID:
 
 
 # ============================================================
-# Configuration
+# CONFIGURATION
 # ============================================================
 
 ALLOWED_CHANNELS = {
-    1554747710089990244
+    1554747710089990244,
 }
 
 
 # ============================================================
-# Discord Client
+# DISCORD CLIENT
 # ============================================================
 
 intents = Intents.default()
+
+# Required for reading normal Discord message content
 intents.message_content = True
 
-client = discord.Client(intents=intents)
+client = discord.Client(
+    intents=intents
+)
 
 
 # ============================================================
-# Telegram HTTP Session
+# TELEGRAM SESSION
 # ============================================================
 
 session = None
 
 
 async def get_session():
+
     global session
 
     if session is None or session.closed:
+
         session = aiohttp.ClientSession()
 
     return session
 
 
 # ============================================================
-# Telegram API
+# LOG HELPERS
 # ============================================================
 
-async def telegram(method: str, data: dict):
+def log_header(title):
+
+    print()
+    print("=" * 70)
+    print(title)
+    print("=" * 70)
+
+
+def log_value(name, value):
+
+    print(
+        f"[INFO] {name}: {value}"
+    )
+
+
+# ============================================================
+# TELEGRAM API
+# ============================================================
+
+async def telegram(
+    method,
+    data=None,
+    json_data=None
+):
+
+    log_header(
+        f"📡 TELEGRAM API REQUEST: {method}"
+    )
+
+    print(
+        "[TELEGRAM] Preparing request..."
+    )
+
+    print(
+        f"[TELEGRAM] Chat ID: {CHAT_ID}"
+    )
+
+    if data:
+
+        print(
+            "[TELEGRAM] Request type: FORM DATA"
+        )
+
+        for key, value in data.items():
+
+            if key in {
+                "text",
+                "caption",
+                "photo",
+                "document",
+                "chat_id",
+            }:
+
+                print(
+                    f"[TELEGRAM] {key}: "
+                    f"{str(value)[:1000]}"
+                )
+
+    if json_data:
+
+        print(
+            "[TELEGRAM] Request type: JSON"
+        )
+
+        print(
+            f"[TELEGRAM] JSON keys: "
+            f"{list(json_data.keys())}"
+        )
 
     s = await get_session()
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_TOKEN}/{method}"
+    )
 
-    async with s.post(url, data=data) as resp:
+    try:
 
-        result = await resp.text()
+        print(
+            "[TELEGRAM] Sending HTTP request..."
+        )
 
-        if resp.status != 200:
+        if json_data is not None:
 
-            print("=" * 60)
-            print("❌ TELEGRAM ERROR")
-            print("Status:", resp.status)
-            print(result)
-            print("=" * 60)
+            async with s.post(
+                url,
+                json=json_data
+            ) as resp:
+
+                status = resp.status
+                result = await resp.text()
+
+        else:
+
+            async with s.post(
+                url,
+                data=data
+            ) as resp:
+
+                status = resp.status
+                result = await resp.text()
+
+        print(
+            f"[TELEGRAM] HTTP STATUS: {status}"
+        )
+
+        print(
+            f"[TELEGRAM] API RESPONSE:"
+        )
+
+        print(
+            result
+        )
+
+        if status == 200:
+
+            print(
+                "✅ [TELEGRAM] HTTP request successful"
+            )
+
+        else:
+
+            print(
+                "❌ [TELEGRAM] HTTP request failed"
+            )
 
         return result
 
+    except Exception as e:
+
+        print()
+        print("=" * 70)
+        print("❌ TELEGRAM REQUEST EXCEPTION")
+        print("=" * 70)
+
+        print(
+            "Error type:",
+            type(e).__name__
+        )
+
+        print(
+            "Error:",
+            repr(e)
+        )
+
+        traceback.print_exc()
+
+        print("=" * 70)
+
+        return ""
+
 
 # ============================================================
-# Send Telegram Message
+# TELEGRAM SEND MESSAGE
 # ============================================================
 
 async def send_message(text):
 
     if not text:
-        return
 
-    text = html.escape(text)
+        print(
+            "⚠️ [TELEGRAM] Empty text - nothing to send"
+        )
 
-    await telegram(
+        return False
+
+    log_header(
+        "➡️ SENDING TEXT TO TELEGRAM"
+    )
+
+    print(
+        f"[TELEGRAM] Text length: {len(text)}"
+    )
+
+    print(
+        "[TELEGRAM] Text preview:"
+    )
+
+    print(
+        text[:3000]
+    )
+
+    data = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False,
+    }
+
+    result = await telegram(
         "sendMessage",
-        {
-            "chat_id": CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True
-        }
+        data=data
     )
 
+    if '"ok":true' in result:
+
+        print(
+            "✅ [TELEGRAM] TEXT SENT SUCCESSFULLY"
+        )
+
+        return True
+
+    print(
+        "❌ [TELEGRAM] TEXT SEND FAILED"
+    )
+
+    return False
+
 
 # ============================================================
-# Send Telegram Photo
+# TELEGRAM SEND PHOTO
 # ============================================================
 
-async def send_photo(url, caption=None):
+async def send_photo(
+    url,
+    caption=None
+):
+
+    log_header(
+        "➡️ SENDING PHOTO TO TELEGRAM"
+    )
+
+    print(
+        f"[TELEGRAM] Photo URL: {url}"
+    )
+
+    if caption:
+
+        print(
+            f"[TELEGRAM] Caption length: "
+            f"{len(caption)}"
+        )
+
+        print(
+            "[TELEGRAM] Caption:"
+        )
+
+        print(
+            caption[:3000]
+        )
 
     data = {
         "chat_id": CHAT_ID,
-        "photo": url
+        "photo": url,
     }
 
     if caption:
 
-        data["caption"] = html.escape(caption)
-        data["parse_mode"] = "HTML"
+        # Telegram caption limit
+        if len(caption) <= 1024:
 
-    await telegram(
+            data["caption"] = caption
+            data["parse_mode"] = "HTML"
+
+        else:
+
+            print(
+                "⚠️ [TELEGRAM] Caption is longer "
+                "than Telegram limit"
+            )
+
+    result = await telegram(
         "sendPhoto",
-        data
+        data=data
     )
 
+    if '"ok":true' in result:
+
+        print(
+            "✅ [TELEGRAM] PHOTO SENT SUCCESSFULLY"
+        )
+
+        return True
+
+    print(
+        "❌ [TELEGRAM] PHOTO SEND FAILED"
+    )
+
+    return False
+
 
 # ============================================================
-# Send Telegram Document
+# TELEGRAM SEND DOCUMENT
 # ============================================================
 
-async def send_document(url, caption=None):
+async def send_document(
+    url,
+    caption=None
+):
+
+    log_header(
+        "➡️ SENDING DOCUMENT TO TELEGRAM"
+    )
+
+    print(
+        f"[TELEGRAM] Document URL: {url}"
+    )
+
+    print(
+        f"[TELEGRAM] Caption: {caption}"
+    )
 
     data = {
         "chat_id": CHAT_ID,
-        "document": url
+        "document": url,
     }
 
     if caption:
 
-        data["caption"] = html.escape(caption)
-        data["parse_mode"] = "HTML"
+        if len(caption) <= 1024:
 
-    await telegram(
+            data["caption"] = caption
+            data["parse_mode"] = "HTML"
+
+    result = await telegram(
         "sendDocument",
-        data
+        data=data
     )
+
+    if '"ok":true' in result:
+
+        print(
+            "✅ [TELEGRAM] DOCUMENT SENT SUCCESSFULLY"
+        )
+
+        return True
+
+    print(
+        "❌ [TELEGRAM] DOCUMENT SEND FAILED"
+    )
+
+    return False
 
 
 # ============================================================
-# Emoji Conversion
+# TELEGRAM STARTUP TEST
+# ============================================================
+
+async def test_telegram_connection():
+
+    log_header(
+        "🧪 TELEGRAM CONNECTION TEST"
+    )
+
+    print(
+        "[TEST] Calling getMe..."
+    )
+
+    result = await telegram(
+        "getMe"
+    )
+
+    if '"ok":true' in result:
+
+        print(
+            "✅ TELEGRAM TOKEN IS VALID"
+        )
+
+        print(
+            "[TEST] Telegram bot connection is working"
+        )
+
+        return True
+
+    print(
+        "❌ TELEGRAM TOKEN TEST FAILED"
+    )
+
+    print(
+        "[TEST] Check TELEGRAM_TOKEN"
+    )
+
+    return False
+
+
+# ============================================================
+# EMOJI MAP
 # ============================================================
 
 EMOJI_MAP = {
 
+    # Flags
     ":flag_ir:": "🇮🇷",
     ":flag_us:": "🇺🇸",
     ":flag_gb:": "🇬🇧",
@@ -172,142 +469,562 @@ EMOJI_MAP = {
     ":flag_be:": "🇧🇪",
     ":flag_tr:": "🇹🇷",
     ":flag_ru:": "🇷🇺",
+    ":flag_ca:": "🇨🇦",
+    ":flag_au:": "🇦🇺",
+    ":flag_nz:": "🇳🇿",
+    ":flag_jp:": "🇯🇵",
+    ":flag_cn:": "🇨🇳",
+    ":flag_kr:": "🇰🇷",
+    ":flag_in:": "🇮🇳",
+    ":flag_br:": "🇧🇷",
+    ":flag_mx:": "🇲🇽",
 
-    ":arrow_up:": "⬆️",
-    ":arrow_double_up:": "⏫",
-
+    # Symbols
     ":white_check_mark:": "✅",
+    ":heavy_check_mark:": "✔️",
+    ":ballot_box_with_check:": "☑️",
+
     ":x:": "❌",
-    ":warning:": "⚠️"
+    ":heavy_multiplication_x:": "✖️",
+
+    ":warning:": "⚠️",
+
+    ":no_entry:": "⛔",
+    ":no_entry_sign:": "🚫",
+
+    ":question:": "❓",
+    ":grey_question:": "❔",
+
+    ":exclamation:": "❗",
+    ":grey_exclamation:": "❕",
+
+    ":information_source:": "ℹ️",
+
+    # Arrows
+    ":arrow_up:": "⬆️",
+    ":arrow_down:": "⬇️",
+    ":arrow_left:": "⬅️",
+    ":arrow_right:": "➡️",
+
+    ":arrow_upper_right:": "↗️",
+    ":arrow_upper_left:": "↖️",
+    ":arrow_lower_right:": "↘️",
+    ":arrow_lower_left:": "↙️",
+
+    ":arrow_double_up:": "⏫",
+    ":arrow_double_down:": "⏬",
+
+    # Transport
+    ":car:": "🚗",
+    ":red_car:": "🚗",
+    ":taxi:": "🚕",
+    ":truck:": "🚚",
+    ":articulated_lorry:": "🚛",
+    ":bus:": "🚌",
+    ":blue_car:": "🚙",
+    ":motorcycle:": "🏍️",
+    ":bike:": "🚲",
+    ":fuelpump:": "⛽",
+    ":rotating_light:": "🚨",
+
+    # Faces
+    ":grinning:": "😀",
+    ":smiley:": "😃",
+    ":smile:": "😄",
+    ":grin:": "😁",
+    ":laughing:": "😆",
+    ":satisfied:": "😆",
+    ":sweat_smile:": "😅",
+    ":joy:": "😂",
+
+    ":wink:": "😉",
+    ":blush:": "😊",
+
+    ":heart_eyes:": "😍",
+    ":kissing_heart:": "😘",
+
+    ":thinking:": "🤔",
+    ":sunglasses:": "😎",
+
+    ":cry:": "😢",
+    ":sob:": "😭",
+
+    ":angry:": "😠",
+    ":rage:": "😡",
+
+    ":confused:": "😕",
+    ":neutral_face:": "😐",
+    ":expressionless:": "😑",
+
+    ":scream:": "😱",
+    ":fearful:": "😨",
+    ":sleeping:": "😴",
+
+    ":poop:": "💩",
+    ":shit:": "💩",
+
+    # Hands
+    ":+1:": "👍",
+    ":thumbsup:": "👍",
+    ":-1:": "👎",
+    ":thumbsdown:": "👎",
+
+    ":ok_hand:": "👌",
+    ":clap:": "👏",
+    ":wave:": "👋",
+    ":pray:": "🙏",
+    ":muscle:": "💪",
+
+    ":point_up:": "☝️",
+    ":point_right:": "👉",
+    ":point_left:": "👈",
+    ":point_down:": "👇",
+
+    # Hearts
+    ":heart:": "❤️",
+    ":yellow_heart:": "💛",
+    ":green_heart:": "💚",
+    ":blue_heart:": "💙",
+    ":purple_heart:": "💜",
+    ":black_heart:": "🖤",
+
+    ":broken_heart:": "💔",
+    ":two_hearts:": "💕",
+    ":sparkling_heart:": "💖",
+
+    # Objects
+    ":fire:": "🔥",
+    ":star:": "⭐",
+    ":star2:": "🌟",
+    ":sparkles:": "✨",
+    ":boom:": "💥",
+    ":zap:": "⚡",
+
+    ":sunny:": "☀️",
+    ":cloud:": "☁️",
+    ":snowflake:": "❄️",
+    ":rainbow:": "🌈",
+
+    ":eyes:": "👀",
+    ":eye:": "👁️",
+
+    ":100:": "💯",
+
+    ":checkered_flag:": "🏁",
+    ":tada:": "🎉",
+    ":gift:": "🎁",
+    ":bell:": "🔔",
+
+    ":lock:": "🔒",
+    ":unlock:": "🔓",
+
+    ":heavy_plus_sign:": "➕",
+    ":heavy_minus_sign:": "➖",
+    ":heavy_dollar_sign:": "💲",
+
+    ":copyright:": "©️",
+    ":registered:": "®️",
+    ":tm:": "™️",
 }
 
 
 emoji_pattern = re.compile(
     "|".join(
         re.escape(x)
-        for x in EMOJI_MAP.keys()
+        for x in sorted(
+            EMOJI_MAP.keys(),
+            key=len,
+            reverse=True
+        )
     )
 )
 
+
+# ============================================================
+# DISCORD CUSTOM EMOJI
+# ============================================================
+
+CUSTOM_EMOJI_PATTERN = re.compile(
+    r"<(a?):([a-zA-Z0-9_]+):(\d+)>"
+)
+
+
+def convert_custom_emoji(match):
+
+    animated = match.group(1)
+    name = match.group(2)
+    emoji_id = match.group(3)
+
+    shortcode = f":{name}:"
+
+    if shortcode in EMOJI_MAP:
+
+        return EMOJI_MAP[
+            shortcode
+        ]
+
+    # Keep unknown custom emoji name.
+    if animated:
+
+        return f":{name}:"
+
+    return f":{name}:"
+
+
+# ============================================================
+# CONVERT EMOJI
+# ============================================================
 
 def convert_emoji(text):
 
     if not text:
         return ""
 
-    return emoji_pattern.sub(
-        lambda m: EMOJI_MAP[m.group(0)],
+    text = str(text)
+
+    # Discord custom emoji
+    text = CUSTOM_EMOJI_PATTERN.sub(
+        convert_custom_emoji,
+        text
+    )
+
+    # Standard Discord emoji shortcodes
+    text = emoji_pattern.sub(
+        lambda match: EMOJI_MAP[
+            match.group(0)
+        ],
+        text
+    )
+
+    return text
+
+
+# ============================================================
+# DISCORD MARKDOWN LINKS
+# ============================================================
+
+DISCORD_LINK_PATTERN = re.compile(
+    r"\[([^\]]+)\]\((https?://[^\s\)]+)\)"
+)
+
+
+def convert_discord_links(text):
+
+    if not text:
+        return ""
+
+    def replace_link(match):
+
+        label = html.escape(
+            match.group(1),
+            quote=False
+        )
+
+        url = html.escape(
+            match.group(2),
+            quote=True
+        )
+
+        return (
+            f'<a href="{url}">'
+            f'{label}'
+            f'</a>'
+        )
+
+    return DISCORD_LINK_PATTERN.sub(
+        replace_link,
         text
     )
 
 
 # ============================================================
-# Discord Embed → Text
+# CONVERT TEXT TO TELEGRAM HTML
 # ============================================================
 
-def embed_to_text(embed: discord.Embed, driver=None):
+def convert_text(text):
 
-    lines = []
+    if not text:
+        return ""
 
-    if driver:
+    text = str(text)
 
-        lines.append(
-            f"👤 {driver}"
+    text = text.replace(
+        "\r\n",
+        "\n"
+    )
+
+    text = text.replace(
+        "\r",
+        "\n"
+    )
+
+    # Emojis
+    text = convert_emoji(
+        text
+    )
+
+    # Discord markdown links
+    text = convert_discord_links(
+        text
+    )
+
+    # Protect generated Telegram links
+    protected_links = {}
+
+    def protect_link(match):
+
+        key = (
+            f"___TELEGRAM_LINK_"
+            f"{len(protected_links)}___"
         )
 
-        lines.append("")
+        protected_links[key] = match.group(0)
 
+        return key
+
+    text = re.sub(
+        r'<a href="[^"]+">.*?</a>',
+        protect_link,
+        text,
+        flags=re.DOTALL
+    )
+
+    # Escape HTML
+    text = html.escape(
+        text,
+        quote=False
+    )
+
+    # Restore links
+    for key, value in protected_links.items():
+
+        text = text.replace(
+            html.escape(key),
+            value
+        )
+
+    # Bold
+    text = re.sub(
+        r"\*\*(.+?)\*\*",
+        r"<b>\1</b>",
+        text,
+        flags=re.DOTALL
+    )
+
+    # Italic
+    text = re.sub(
+        r"(?<!\*)\*([^*\n]+)\*(?!\*)",
+        r"<i>\1</i>",
+        text
+    )
+
+    # Underline
+    text = re.sub(
+        r"__([^_]+)__",
+        r"<u>\1</u>",
+        text
+    )
+
+    # Strikethrough
+    text = re.sub(
+        r"~~(.+?)~~",
+        r"<s>\1</s>",
+        text,
+        flags=re.DOTALL
+    )
+
+    # Inline code
+    text = re.sub(
+        r"`([^`]+)`",
+        r"<code>\1</code>",
+        text
+    )
+
+    # Avoid huge empty spaces
+    text = re.sub(
+        r"\n{3,}",
+        "\n\n",
+        text
+    )
+
+    return text.strip()
+
+
+# ============================================================
+# EMBED → TEXT
+# ============================================================
+
+def embed_to_text(embed):
+
+    parts = []
+
+    # Author
+    if (
+        embed.author
+        and embed.author.name
+    ):
+
+        author = convert_text(
+            embed.author.name
+        )
+
+        if author:
+
+            parts.append(
+                author
+            )
+
+    # Title
     if embed.title:
 
-        lines.append(
-            f"📦 {convert_emoji(embed.title)}"
+        title = convert_text(
+            embed.title
         )
 
+        if title:
+
+            parts.append(
+                title
+            )
+
+    # Embed URL
+    if embed.url:
+
+        url = str(
+            embed.url
+        ).strip()
+
+        if url:
+
+            safe_url = html.escape(
+                url,
+                quote=True
+            )
+
+            parts.append(
+                f'<a href="{safe_url}">'
+                f'{safe_url}'
+                f'</a>'
+            )
+
+    # Description
     if embed.description:
 
-        lines.append(
-            convert_emoji(
-                embed.description
-            )
+        description = convert_text(
+            embed.description
         )
 
-    if embed.fields:
+        if description:
 
-        lines.append("")
-
-        for field in embed.fields:
-
-            name = convert_emoji(
-                field.name or ""
+            parts.append(
+                description
             )
 
-            value = convert_emoji(
-                field.value or ""
+    # Fields
+    for field in embed.fields:
+
+        name = convert_text(
+            field.name or ""
+        )
+
+        value = convert_text(
+            field.value or ""
+        )
+
+        if name and value:
+
+            parts.append(
+                f"<b>{name}</b>\n"
+                f"{value}"
             )
 
-            if not value:
-                continue
+        elif value:
 
-            lines.append(
+            parts.append(
+                value
+            )
+
+        elif name:
+
+            parts.append(
                 f"<b>{name}</b>"
             )
 
-            lines.append(value)
-            lines.append("")
+    # Footer
+    if (
+        embed.footer
+        and embed.footer.text
+    ):
 
-    if embed.footer and embed.footer.text:
-
-        lines.append(
-            "--------------------"
+        footer = convert_text(
+            embed.footer.text
         )
 
-        lines.append(
-            convert_emoji(
-                embed.footer.text
+        if footer:
+
+            parts.append(
+                footer
             )
-        )
 
-    return "\n".join(lines).strip()
+    return "\n\n".join(
+        parts
+    ).strip()
 
 
 # ============================================================
-# Detect Driver Name
+# GET DRIVER / AUTHOR
 # ============================================================
 
 def get_driver_name(message):
 
     for embed in message.embeds:
 
-        if embed.author and embed.author.name:
+        if (
+            embed.author
+            and embed.author.name
+        ):
 
             return embed.author.name
 
-    if message.author and message.author.name:
+    if (
+        message.author
+        and message.author.name
+    ):
 
-        name = message.author.name
-
-        if "webhook" not in name.lower():
-
-            return name
+        return message.author.name
 
     return None
 
 
 # ============================================================
-# Discord Ready Event
+# DISCORD READY
 # ============================================================
 
 @client.event
 async def on_ready():
 
-    print()
-    print("=" * 60)
-    print("✅ DISCORD BOT ONLINE")
-    print(f"Bot     : {client.user}")
-    print(f"Guilds  : {len(client.guilds)}")
-    print("=" * 60)
+    log_header(
+        "✅ DISCORD BOT ONLINE"
+    )
 
-    print("Allowed channels:")
+    print(
+        f"[DISCORD] Bot: {client.user}"
+    )
+
+    print(
+        f"[DISCORD] Bot ID: {client.user.id}"
+    )
+
+    print(
+        f"[DISCORD] Guild count: "
+        f"{len(client.guilds)}"
+    )
+
+    print()
+
+    print(
+        "[DISCORD] Allowed channels:"
+    )
 
     for channel_id in ALLOWED_CHANNELS:
 
@@ -330,228 +1047,381 @@ async def on_ready():
                 f"{channel_id}"
             )
 
-    print("=" * 60)
+    # Telegram startup test
+    try:
+
+        await test_telegram_connection()
+
+    except Exception as e:
+
+        print(
+            "❌ Telegram startup test error:",
+            repr(e)
+        )
+
+    log_header(
+        "🟢 BRIDGE READY"
+    )
+
+    print(
+        "[READY] Waiting for Discord messages..."
+    )
 
 
 # ============================================================
-# Discord Message Event
+# DISCORD MESSAGE EVENT
 # ============================================================
 
 @client.event
 async def on_message(message):
 
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # This print happens BEFORE any filtering.
-    # It tells us whether Discord delivered the event.
-    # --------------------------------------------------------
+    # ========================================================
+    # THIS MUST APPEAR IF DISCORD DELIVERS THE EVENT
+    # ========================================================
 
-    print()
-    print("=" * 60)
-    print("📨 DISCORD MESSAGE EVENT RECEIVED")
-    print("=" * 60)
-
-    print(
-        f"Author       : {message.author}"
+    log_header(
+        "📨 DISCORD MESSAGE EVENT RECEIVED"
     )
 
     print(
-        f"Author ID    : {message.author.id}"
+        f"[DISCORD] Author       : "
+        f"{message.author}"
     )
 
     print(
-        f"Channel      : {message.channel}"
+        f"[DISCORD] Author ID    : "
+        f"{message.author.id}"
     )
 
     print(
-        f"Channel ID   : {message.channel.id}"
+        f"[DISCORD] Author Bot   : "
+        f"{message.author.bot}"
     )
 
     print(
-        f"Content      : {message.content}"
+        f"[DISCORD] Webhook ID   : "
+        f"{message.webhook_id}"
     )
 
     print(
-        f"Bot Message  : {message.author.bot}"
+        f"[DISCORD] Channel      : "
+        f"{message.channel}"
     )
 
     print(
-        f"Webhook ID   : {message.webhook_id}"
+        f"[DISCORD] Channel ID   : "
+        f"{message.channel.id}"
     )
 
     print(
-        f"Embeds       : {len(message.embeds)}"
+        f"[DISCORD] Guild        : "
+        f"{message.guild}"
     )
 
     print(
-        f"Attachments  : {len(message.attachments)}"
+        f"[DISCORD] Content      : "
+        f"{message.content}"
     )
 
-    print("=" * 60)
+    print(
+        f"[DISCORD] Embeds       : "
+        f"{len(message.embeds)}"
+    )
 
+    print(
+        f"[DISCORD] Attachments  : "
+        f"{len(message.attachments)}"
+    )
 
-    # --------------------------------------------------------
-    # Ignore our own messages
-    # --------------------------------------------------------
+    print(
+        f"[DISCORD] Stickers     : "
+        f"{len(message.stickers)}"
+    )
 
-    if message.author.id == client.user.id:
+    # ========================================================
+    # EMBED DEBUG
+    # ========================================================
+
+    if message.embeds:
+
+        print()
+        print(
+            "[DISCORD] EMBED DETAILS"
+        )
+
+        for index, embed in enumerate(
+            message.embeds,
+            start=1
+        ):
+
+            print(
+                f"--- Embed #{index} ---"
+            )
+
+            print(
+                f"Title       : "
+                f"{embed.title}"
+            )
+
+            print(
+                f"Description : "
+                f"{embed.description}"
+            )
+
+            print(
+                f"URL         : "
+                f"{embed.url}"
+            )
+
+            print(
+                f"Fields      : "
+                f"{len(embed.fields)}"
+            )
+
+            print(
+                f"Image       : "
+                f"{embed.image.url if embed.image else None}"
+            )
+
+            print(
+                f"Thumbnail   : "
+                f"{embed.thumbnail.url if embed.thumbnail else None}"
+            )
+
+            if embed.footer:
+
+                print(
+                    f"Footer      : "
+                    f"{embed.footer.text}"
+                )
+
+            if embed.author:
+
+                print(
+                    f"Embed Author: "
+                    f"{embed.author.name}"
+                )
+
+    # ========================================================
+    # ATTACHMENT DEBUG
+    # ========================================================
+
+    if message.attachments:
+
+        print()
+        print(
+            "[DISCORD] ATTACHMENT DETAILS"
+        )
+
+        for attachment in message.attachments:
+
+            print(
+                f"--- Attachment ---"
+            )
+
+            print(
+                f"Filename    : "
+                f"{attachment.filename}"
+            )
+
+            print(
+                f"ContentType : "
+                f"{attachment.content_type}"
+            )
+
+            print(
+                f"Size        : "
+                f"{attachment.size}"
+            )
+
+            print(
+                f"URL         : "
+                f"{attachment.url}"
+            )
+
+    # ========================================================
+    # IGNORE OWN BOT MESSAGE
+    # ========================================================
+
+    if (
+        client.user
+        and message.author.id == client.user.id
+    ):
 
         print(
-            "⏭️ Ignored: message sent by this bot"
+            "⏭️ [FILTER] Ignored own bot message"
         )
 
         return
 
+    # ========================================================
+    # CHANNEL FILTER
+    # ========================================================
 
-    # --------------------------------------------------------
-    # Check allowed channel
-    # --------------------------------------------------------
+    print()
+
+    print(
+        "[FILTER] Checking channel..."
+    )
+
+    print(
+        f"[FILTER] Current: "
+        f"{message.channel.id}"
+    )
+
+    print(
+        f"[FILTER] Allowed: "
+        f"{ALLOWED_CHANNELS}"
+    )
 
     if message.channel.id not in ALLOWED_CHANNELS:
 
         print(
-            "⏭️ Ignored: channel is not allowed"
+            "❌ [FILTER] CHANNEL NOT ALLOWED"
         )
 
         print(
-            f"Allowed channels: {ALLOWED_CHANNELS}"
+            "❌ Message will NOT be sent to Telegram"
         )
-
-        print("=" * 60)
 
         return
 
-
-    # --------------------------------------------------------
-    # Target channel matched
-    # --------------------------------------------------------
-
     print(
-        "✅ TARGET CHANNEL MATCHED"
+        "✅ [FILTER] TARGET CHANNEL MATCHED"
     )
 
-
-    driver = get_driver_name(
-        message
-    )
-
+    # ========================================================
+    # PROCESS
+    # ========================================================
 
     try:
 
+        log_header(
+            "⚙️ PYTHON MESSAGE PROCESSING"
+        )
+
+        driver = get_driver_name(
+            message
+        )
+
+        print(
+            f"[PYTHON] Author/Driver: "
+            f"{driver}"
+        )
+
         # ====================================================
-        # Normal Discord Message
+        # NORMAL TEXT
         # ====================================================
 
-        if message.content.strip():
+        if message.content:
 
-            text = convert_emoji(
+            print(
+                "[PYTHON] Processing normal message text"
+            )
+
+            text = convert_text(
                 message.content
             )
 
-            if driver:
-
-                text = (
-                    f"👤 {driver}\n\n"
-                    f"{text}"
-                )
+            print(
+                "[PYTHON] Converted text:"
+            )
 
             print(
-                "➡️ Sending text to Telegram..."
+                text
             )
 
             await send_message(
                 text
             )
 
+        # ====================================================
+        # EMBEDS
+        # ====================================================
+
+        for index, embed in enumerate(
+            message.embeds,
+            start=1
+        ):
+
+            print()
             print(
-                "✅ Text sent to Telegram"
+                f"[PYTHON] Processing Embed #{index}"
             )
 
-
-        # ====================================================
-        # Discord Embeds
-        # ====================================================
-
-        for embed in message.embeds:
-
-            text = embed_to_text(
-                embed,
-                driver
+            embed_text = embed_to_text(
+                embed
             )
 
-            if text:
+            print(
+                "[PYTHON] Converted embed:"
+            )
 
-                print(
-                    "➡️ Sending embed text to Telegram..."
-                )
+            print(
+                embed_text
+            )
+
+            if embed_text:
 
                 await send_message(
-                    text
+                    embed_text
                 )
 
-                print(
-                    "✅ Embed text sent"
-                )
-
-
+            # Embed image
             if (
                 embed.image
                 and embed.image.url
             ):
 
                 print(
-                    "➡️ Sending embed image..."
+                    "[PYTHON] Embed contains IMAGE"
                 )
 
                 await send_photo(
-                    embed.image.url,
-                    driver
+                    embed.image.url
                 )
 
-                print(
-                    "✅ Embed image sent"
-                )
-
-
-            elif (
+            # Embed thumbnail
+            if (
                 embed.thumbnail
                 and embed.thumbnail.url
             ):
 
                 print(
-                    "➡️ Sending embed thumbnail..."
+                    "[PYTHON] Embed contains THUMBNAIL"
                 )
 
                 await send_photo(
-                    embed.thumbnail.url,
-                    driver
+                    embed.thumbnail.url
                 )
-
-                print(
-                    "✅ Embed thumbnail sent"
-                )
-
 
         # ====================================================
-        # Attachments
+        # ATTACHMENTS
         # ====================================================
 
         for attachment in message.attachments:
 
-            ctype = (
-                attachment.content_type
-                or ""
+            print()
+            print(
+                "[PYTHON] Processing attachment"
             )
 
             print(
-                f"📎 Attachment: "
+                f"[PYTHON] Filename: "
                 f"{attachment.filename}"
             )
 
-            if ctype.startswith("image"):
+            content_type = (
+                attachment.content_type
+                or ""
+            ).lower()
+
+            if content_type.startswith(
+                "image/"
+            ):
 
                 print(
-                    "➡️ Sending image to Telegram..."
+                    "🖼️ [PYTHON] Attachment is IMAGE"
                 )
 
                 await send_photo(
@@ -559,14 +1429,10 @@ async def on_message(message):
                     attachment.filename
                 )
 
-                print(
-                    "✅ Image sent"
-                )
-
             else:
 
                 print(
-                    "➡️ Sending document to Telegram..."
+                    "📄 [PYTHON] Attachment is DOCUMENT"
                 )
 
                 await send_document(
@@ -574,21 +1440,19 @@ async def on_message(message):
                     attachment.filename
                 )
 
-                print(
-                    "✅ Document sent"
-                )
+        # ====================================================
+        # FINAL
+        # ====================================================
 
-
-        print(
+        log_header(
             "✅ MESSAGE PROCESSING COMPLETED"
         )
 
     except Exception as e:
 
-        print()
-        print("=" * 60)
-        print("❌ MESSAGE PROCESSING ERROR")
-        print("=" * 60)
+        log_header(
+            "❌ MESSAGE PROCESSING ERROR"
+        )
 
         print(
             "Error type:",
@@ -597,24 +1461,30 @@ async def on_message(message):
 
         print(
             "Error:",
-            e
+            repr(e)
         )
 
-        print("=" * 60)
+        traceback.print_exc()
+
+        print(
+            "=" * 70
+        )
 
 
 # ============================================================
-# Flask Web Server
+# FLASK
 # ============================================================
 
-app = Flask(__name__)
+app = Flask(
+    __name__
+)
 
 
 @app.route("/")
 def home():
 
     return (
-        "HaulMP Bridge is running",
+        "Discord -> Telegram Bridge is running",
         200
     )
 
@@ -629,7 +1499,7 @@ def health():
 
 
 # ============================================================
-# Start Flask
+# WEB SERVER
 # ============================================================
 
 def run_web_server():
@@ -641,13 +1511,13 @@ def run_web_server():
         )
     )
 
-    print()
-    print("=" * 60)
-    print("🌐 STARTING RENDER WEB SERVER")
-    print(
-        f"Port: {port}"
+    log_header(
+        "🌐 STARTING RENDER WEB SERVER"
     )
-    print("=" * 60)
+
+    print(
+        f"[RENDER] Port: {port}"
+    )
 
     app.run(
         host="0.0.0.0",
@@ -658,19 +1528,31 @@ def run_web_server():
 
 
 # ============================================================
-# Start Everything
+# START
 # ============================================================
 
 if __name__ == "__main__":
 
-    print()
-    print("=" * 60)
-    print("🚀 STARTING HAULMP BRIDGE")
-    print("=" * 60)
+    log_header(
+        "🚀 STARTING DISCORD → TELEGRAM BRIDGE"
+    )
 
+    print(
+        "[STARTUP] Python process started"
+    )
+
+    print(
+        f"[STARTUP] Allowed channels: "
+        f"{ALLOWED_CHANNELS}"
+    )
+
+    print(
+        "[STARTUP] Message Content Intent: "
+        f"{intents.message_content}"
+    )
 
     # --------------------------------------------------------
-    # Start Flask in background thread
+    # Start Flask
     # --------------------------------------------------------
 
     web_thread = threading.Thread(
@@ -680,11 +1562,40 @@ if __name__ == "__main__":
 
     web_thread.start()
 
-
-    # --------------------------------------------------------
-    # Start Discord Bot
-    # --------------------------------------------------------
-
-    client.run(
-        DISCORD_TOKEN
+    print(
+        "✅ [STARTUP] Flask thread started"
     )
+
+    # --------------------------------------------------------
+    # Start Discord
+    # --------------------------------------------------------
+
+    print(
+        "➡️ [STARTUP] Connecting to Discord..."
+    )
+
+    try:
+
+        client.run(
+            DISCORD_TOKEN
+        )
+
+    except Exception as e:
+
+        log_header(
+            "❌ DISCORD CLIENT CRASHED"
+        )
+
+        print(
+            "Error type:",
+            type(e).__name__
+        )
+
+        print(
+            "Error:",
+            repr(e)
+        )
+
+        traceback.print_exc()
+
+        raise
