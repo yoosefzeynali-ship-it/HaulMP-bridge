@@ -1,10 +1,13 @@
 import os
 import re
 import html
-import asyncio
+import threading
+
 import aiohttp
 import discord
 from discord import Intents
+from flask import Flask
+
 
 # ==========================
 # Environment Variables
@@ -23,8 +26,9 @@ if not TELEGRAM_TOKEN:
 if not CHAT_ID:
     raise RuntimeError("CHAT_ID not found")
 
+
 # ==========================
-# Discord Settings
+# Discord Configuration
 # ==========================
 
 ALLOWED_CHANNELS = {
@@ -36,11 +40,13 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 
+
 # ==========================
-# Telegram
+# Telegram Session
 # ==========================
 
 session = None
+
 
 async def get_session():
     global session
@@ -52,25 +58,26 @@ async def get_session():
 
 
 async def telegram(method: str, data: dict):
-
     s = await get_session()
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
 
     async with s.post(url, data=data) as resp:
-
         result = await resp.text()
 
         if resp.status != 200:
             print("Telegram Error")
-            print(resp.status)
+            print("Status:", resp.status)
             print(result)
 
         return result
 
 
-async def send_message(text):
+# ==========================
+# Telegram Send Functions
+# ==========================
 
+async def send_message(text):
     if not text:
         return
 
@@ -88,7 +95,6 @@ async def send_message(text):
 
 
 async def send_photo(url, caption=None):
-
     data = {
         "chat_id": CHAT_ID,
         "photo": url
@@ -102,7 +108,6 @@ async def send_photo(url, caption=None):
 
 
 async def send_document(url, caption=None):
-
     data = {
         "chat_id": CHAT_ID,
         "document": url
@@ -113,8 +118,10 @@ async def send_document(url, caption=None):
         data["parse_mode"] = "HTML"
 
     await telegram("sendDocument", data)
-    # ==========================
-# Emoji Mapping
+
+
+# ==========================
+# Emoji Conversion
 # ==========================
 
 EMOJI_MAP = {
@@ -131,7 +138,6 @@ EMOJI_MAP = {
     ":flag_be:": "🇧🇪",
     ":flag_tr:": "🇹🇷",
     ":flag_ru:": "🇷🇺",
-
     ":arrow_up:": "⬆️",
     ":arrow_double_up:": "⏫",
     ":white_check_mark:": "✅",
@@ -145,7 +151,6 @@ emoji_pattern = re.compile(
 
 
 def convert_emoji(text):
-
     if not text:
         return ""
 
@@ -156,7 +161,7 @@ def convert_emoji(text):
 
 
 # ==========================
-# Embed Parser
+# Discord Embed Conversion
 # ==========================
 
 def embed_to_text(embed: discord.Embed, driver=None):
@@ -168,10 +173,14 @@ def embed_to_text(embed: discord.Embed, driver=None):
         lines.append("")
 
     if embed.title:
-        lines.append(f"📦 {convert_emoji(embed.title)}")
+        lines.append(
+            f"📦 {convert_emoji(embed.title)}"
+        )
 
     if embed.description:
-        lines.append(convert_emoji(embed.description))
+        lines.append(
+            convert_emoji(embed.description)
+        )
 
     if embed.fields:
 
@@ -179,8 +188,13 @@ def embed_to_text(embed: discord.Embed, driver=None):
 
         for field in embed.fields:
 
-            name = convert_emoji(field.name or "")
-            value = convert_emoji(field.value or "")
+            name = convert_emoji(
+                field.name or ""
+            )
+
+            value = convert_emoji(
+                field.value or ""
+            )
 
             if not value:
                 continue
@@ -192,13 +206,18 @@ def embed_to_text(embed: discord.Embed, driver=None):
     if embed.footer and embed.footer.text:
 
         lines.append("--------------------")
-        lines.append(convert_emoji(embed.footer.text))
+
+        lines.append(
+            convert_emoji(
+                embed.footer.text
+            )
+        )
 
     return "\n".join(lines).strip()
 
 
 # ==========================
-# Driver Name
+# Driver Detection
 # ==========================
 
 def get_driver_name(message):
@@ -216,8 +235,10 @@ def get_driver_name(message):
             return name
 
     return None
-    # ==========================
-# Discord Events
+
+
+# ==========================
+# Discord Ready
 # ==========================
 
 @client.event
@@ -233,84 +254,118 @@ async def on_ready():
         channel = client.get_channel(channel_id)
 
         if channel:
-            print(f"✅ {channel.guild.name} -> #{channel.name}")
+
+            print(
+                f"✅ {channel.guild.name} -> #{channel.name}"
+            )
+
         else:
-            print(f"❌ Cannot access channel {channel_id}")
+
+            print(
+                f"❌ Cannot access channel {channel_id}"
+            )
 
     print("=" * 60)
 
 
+# ==========================
+# Discord Messages
+# ==========================
+
 @client.event
 async def on_message(message):
 
-    # پیام خود بات
     if message.author.id == client.user.id:
         return
 
-    # فقط چنل‌های مجاز
     if message.channel.id not in ALLOWED_CHANNELS:
         return
 
-    print(f"\n📨 Message received")
+    print()
+    print("=" * 60)
+    print("📨 Message received")
     print(f"Channel : {message.channel.name}")
     print(f"Author  : {message.author}")
     print(f"Webhook : {message.webhook_id}")
     print(f"Embeds  : {len(message.embeds)}")
     print(f"Files   : {len(message.attachments)}")
+    print("=" * 60)
 
     driver = get_driver_name(message)
 
     try:
 
-        # =====================
-        # متن معمولی
-        # =====================
+        # ==========================
+        # Normal Message
+        # ==========================
 
         if message.content.strip():
 
-            text = convert_emoji(message.content)
+            text = convert_emoji(
+                message.content
+            )
 
             if driver:
                 text = f"👤 {driver}\n\n{text}"
 
+            print("➡️ Sending text to Telegram...")
+
             await send_message(text)
 
-        # =====================
-        # Embed
-        # =====================
+            print("✅ Text sent to Telegram")
+
+        # ==========================
+        # Embeds
+        # ==========================
 
         for embed in message.embeds:
 
-            text = embed_to_text(embed, driver)
+            text = embed_to_text(
+                embed,
+                driver
+            )
 
             if text:
+
+                print("➡️ Sending embed to Telegram...")
+
                 await send_message(text)
 
-            # تصویر اصلی
+                print("✅ Embed sent to Telegram")
+
             if embed.image and embed.image.url:
+
+                print("➡️ Sending embed image...")
 
                 await send_photo(
                     embed.image.url,
                     driver
                 )
 
-            # Thumbnail
+                print("✅ Embed image sent")
+
             elif embed.thumbnail and embed.thumbnail.url:
+
+                print("➡️ Sending embed thumbnail...")
 
                 await send_photo(
                     embed.thumbnail.url,
                     driver
                 )
 
-        # =====================
+                print("✅ Embed thumbnail sent")
+
+        # ==========================
         # Attachments
-        # =====================
+        # ==========================
 
         for attachment in message.attachments:
 
             ctype = attachment.content_type or ""
 
-            print(f"Attachment : {attachment.filename}")
+            print(
+                f"Attachment : {attachment.filename}"
+            )
 
             if ctype.startswith("image"):
 
@@ -326,6 +381,8 @@ async def on_message(message):
                     attachment.filename
                 )
 
+        print("✅ Message processing completed")
+
     except Exception as e:
 
         print("=" * 60)
@@ -333,8 +390,61 @@ async def on_message(message):
         print(type(e).__name__)
         print(e)
         print("=" * 60)
+
+
 # ==========================
-# Start Bot
+# Flask / Render Web Server
 # ==========================
 
-client.run(DISCORD_TOKEN)
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+
+    return "HaulMP Bridge is running", 200
+
+
+@app.route("/health")
+def health():
+
+    return "OK", 200
+
+
+def run_web_server():
+
+    port = int(
+        os.getenv("PORT", "10000")
+    )
+
+    print("=" * 60)
+    print("🌐 Starting Render Web Server")
+    print(f"Port: {port}")
+    print("=" * 60)
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False,
+        use_reloader=False
+    )
+
+
+# ==========================
+# Start Bot + Web Server
+# ==========================
+
+if __name__ == "__main__":
+
+    web_thread = threading.Thread(
+        target=run_web_server,
+        daemon=True
+    )
+
+    web_thread.start()
+
+    print("=" * 60)
+    print("🚀 Starting HaulMP Bridge")
+    print("=" * 60)
+
+    client.run(DISCORD_TOKEN)
